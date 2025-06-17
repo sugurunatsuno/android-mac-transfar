@@ -1,0 +1,69 @@
+use std::convert::Infallible;
+use std::net::SocketAddr;
+
+use hyper::{Body, Request, Response, Method, StatusCode, Server};
+use hyper::service::{make_service_fn, service_fn};
+use tokio::fs::{File, create_dir_all};
+use tokio::io::AsyncWriteExt;
+use multer::Multipart;
+
+async fn handle_upload(req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    let dir = std::env::current_dir().unwrap().join("uploads");
+    if let Err(e) = create_dir_all(&dir).await {
+        eprintln!("failed to create upload dir: {e}");
+    }
+
+    let mut multipart = match Multipart::new(req.headers(), req.into_body()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("multipart error: {e}");
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("invalid multipart"))
+                .unwrap());
+        }
+    };
+
+    while let Ok(Some(mut field)) = multipart.next_field().await {
+        if let Some(name) = field.file_name().map(|s| s.to_string()) {
+            let path = dir.join(name);
+            match File::create(&path).await {
+                Ok(mut file) => {
+                    while let Ok(Some(chunk)) = field.chunk().await {
+                        if let Err(e) = file.write_all(&chunk).await {
+                            eprintln!("write error: {e}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("file create error: {e}");
+                }
+            }
+        }
+    }
+
+    Ok(Response::new(Body::from("ok")))
+}
+
+async fn router(req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    match (req.method(), req.uri().path()) {
+        (&Method::POST, "/upload") => handle_upload(req).await,
+        _ => Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap()),
+    }
+}
+
+pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let addr: SocketAddr = ([0,0,0,0], 8080).into();
+    let make_service = make_service_fn(|_| async { Ok::<_, Infallible>(service_fn(router)) });
+    let server = Server::bind(&addr).serve(make_service);
+    println!("HTTP server listening on http://{}", addr);
+    tokio::spawn(async move {
+        if let Err(e) = server.await {
+            eprintln!("server error: {e}");
+        }
+    });
+    Ok(())
+}
