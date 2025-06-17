@@ -10,6 +10,9 @@ use tokio::io::AsyncWriteExt;
 /// Port number the HTTP server listens on.
 pub const PORT: u16 = 8080;
 
+/// Maximum allowed upload size in bytes (4 GiB).
+pub const MAX_UPLOAD_SIZE: u64 = 4 * 1024 * 1024 * 1024;
+
 /// Returns the port the server listens on.
 pub fn port() -> u16 {
     PORT
@@ -37,7 +40,15 @@ async fn handle_upload(req: Request<Body>) -> Result<Response<Body>, Infallible>
             let path = dir.join(name);
             match File::create(&path).await {
                 Ok(mut file) => {
+                    let mut written: u64 = 0;
                     while let Ok(Some(chunk)) = field.chunk().await {
+                        written += chunk.len() as u64;
+                        if written > MAX_UPLOAD_SIZE {
+                            return Ok(Response::builder()
+                                .status(StatusCode::PAYLOAD_TOO_LARGE)
+                                .body(Body::from("file too large"))
+                                .unwrap());
+                        }
                         if let Err(e) = file.write_all(&chunk).await {
                             eprintln!("write error: {e}");
                         }
