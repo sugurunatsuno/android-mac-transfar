@@ -1,11 +1,19 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
-use hyper::{Body, Request, Response, Method, StatusCode, Server};
+use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use hyper::service::{make_service_fn, service_fn};
-use tokio::fs::{File, create_dir_all};
-use tokio::io::AsyncWriteExt;
 use multer::Multipart;
+use tokio::fs::{create_dir_all, File};
+use tokio::io::AsyncWriteExt;
+
+/// Port number the HTTP server listens on.
+pub const PORT: u16 = 8080;
+
+/// Returns the port the server listens on.
+pub fn port() -> u16 {
+    PORT
+}
 
 async fn handle_upload(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let dir = std::env::current_dir().unwrap().join("uploads");
@@ -56,8 +64,9 @@ async fn router(req: Request<Body>) -> Result<Response<Body>, Infallible> {
 }
 
 pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let addr: SocketAddr = ([0,0,0,0], 8080).into();
-    let make_service = make_service_fn(|_| async { Ok::<_, Infallible>(service_fn(router)) });
+    let addr: SocketAddr = ([0, 0, 0, 0], PORT).into();
+    let make_service =
+        make_service_fn(|_| async { Ok::<_, Infallible>(service_fn(router)) });
     let server = Server::bind(&addr).serve(make_service);
     println!("HTTP server listening on http://{}", addr);
     tokio::spawn(async move {
