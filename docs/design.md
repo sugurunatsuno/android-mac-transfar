@@ -9,6 +9,7 @@ This document outlines a high-level design for an Android application that acts 
 2. **Backend (Rust HTTP Server)**
    - Uses `hyper` to handle HTTP requests.
    - Exposes `/upload`, `/healthz`, and `/events` endpoints.
+   - `/events` streams progress updates using Server-Sent Events (SSE).
    - Manages file writes to the configured storage path.
 3. **Communication**
    - Upload progress is streamed to the UI via SSE or WebSocket.

@@ -7,12 +7,29 @@ use multer::{Field, Multipart};
 use tokio::fs::{create_dir_all, metadata, File};
 use tokio::io::AsyncWriteExt;
 use std::path::{Path, PathBuf};
+use tokio::sync::broadcast;
+use once_cell::sync::Lazy;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 
 /// Port number the HTTP server listens on.
 pub const PORT: u16 = 8080;
 
 /// Maximum allowed upload size in bytes (4 GiB).
 pub const MAX_UPLOAD_SIZE: u64 = 4 * 1024 * 1024 * 1024;
+
+static EVENT_TX: Lazy<broadcast::Sender<String>> = Lazy::new(|| {
+    let (tx, _rx) = broadcast::channel(100);
+    tx
+});
+
+fn notify(event: &str) {
+    let _ = EVENT_TX.send(event.to_string());
+}
+
+fn subscribe_events() -> broadcast::Receiver<String> {
+    EVENT_TX.subscribe()
+}
 
 /// Returns the port the server listens on.
 pub fn port() -> u16 {
@@ -27,6 +44,8 @@ async fn save_field(mut field: Field, dir: &Path) -> std::io::Result<PathBuf> {
         .file_name()
         .map(|s| s.to_string())
         .unwrap_or_else(|| "file".into());
+
+    notify(&format!("{{\"file\":\"{}\",\"status\":\"start\"}}", name));
 
     let mut path = dir.join(&name);
     if metadata(&path).await.is_ok() {
@@ -64,7 +83,9 @@ async fn save_field(mut field: Field, dir: &Path) -> std::io::Result<PathBuf> {
             ));
         }
         file.write_all(&chunk).await?;
+        notify(&format!("{{\"file\":\"{}\",\"status\":\"progress\",\"bytes\":{}}}", name, written));
     }
+    notify(&format!("{{\"file\":\"{}\",\"status\":\"done\"}}", name));
     Ok(path)
 }
 
@@ -103,9 +124,23 @@ async fn handle_upload(req: Request<Body>) -> Result<Response<Body>, Infallible>
     Ok(Response::new(Body::from("ok")))
 }
 
+async fn handle_events(_req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    let stream = BroadcastStream::new(subscribe_events())
+        .filter_map(|res| async move { res.ok() })
+        .map(|msg| Ok::<_, Infallible>(hyper::body::Bytes::from(format!("data: {}\n\n", msg))));
+    let body = Body::wrap_stream(stream);
+    Ok(Response::builder()
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .body(body)
+        .unwrap())
+}
+
 async fn router(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     match (req.method(), req.uri().path()) {
         (&Method::POST, "/upload") => handle_upload(req).await,
+        (&Method::GET, "/events") => handle_events(req).await,
         _ => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("not found"))
