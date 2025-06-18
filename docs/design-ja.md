@@ -9,6 +9,7 @@
 2. **バックエンド (Rust HTTP サーバ)**
    - `hyper` により HTTP リクエストを処理
    - `/upload` `/healthz` `/events` エンドポイントを公開
+   - `/events` は Server-Sent Events (SSE) で進捗を配信
    - 保存先パスへのファイル書き込みを管理
 3. **通信方式**
    - アップロード進捗は SSE または WebSocket で UI へ送信
